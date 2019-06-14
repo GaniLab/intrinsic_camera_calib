@@ -1,15 +1,21 @@
+/* Program to perform real time camera calibration
+ * input is given in the example at calibration images file
+ * it is chessboard with 9 x 6 corners and 0.03 meters dimension [PLEASE PRINT IT!]
+ * the output are intrinsic camera matrix, distortion coefficients and reprojection error
+ * the accuracy of detected corners are sub pixels
+*/
+
 #ifndef _CRT_SECURE_NO_WARNINGS
 # define _CRT_SECURE_NO_WARNINGS
 #endif
 
-// real time intrinsic camera calibration
-
+// C++ HEADER NEEDED TO PERFORM REAL TIME CAMERA CALIBRATION
 #include <iostream>
 #include <sstream>
 #include <fstream>
 #include <stdio.h>
 
-
+// OPENCV HEADER NEEDED TO PERFORM REAL TIME CAMERA CALIBRATION
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -20,198 +26,275 @@
 #include <opencv2/video.hpp>
 
 
-
-using namespace std;
 using namespace cv;
+using namespace std;
 
-const float square_dimension = 0.03f; //meters
-const Size chessboard_corners = Size(6, 9);
 
-//chessboard corners extraction
-
-void create_board_position(Size boardSize, float squareEdgeLength, vector<Point3f>& corners)
+// function to creates world cooridnates of chessboard, Z axis is approximated as 0
+void world_coordinates(Size boardSize, float chessSqDim, vector<Point3f>& worldPoints)
 {
 	for (int i = 0; i < boardSize.height; i++)
 	{
 		for (int j = 0; j < boardSize.width; j++)
 		{
-			corners.push_back(Point3f(j * squareEdgeLength, i * squareEdgeLength, 0.0f));
+			worldPoints.push_back(Point3f(j*chessSqDim, i*chessSqDim, 0.0f));
 		}
+
 	}
 }
 
-//getting the corners
-void get_chessboard_corners(vector<Mat> images, vector<vector<Point2f>>& allFoundCorners, bool showResults = false)
-{
-	for (vector<Mat>::iterator iter = images.begin(); iter != images.end(); iter++)
-	{
-		vector<Point2f> pointBuf;
-		bool found = findChessboardCorners(*iter, Size(9, 6), pointBuf, CALIB_CB_ADAPTIVE_THRESH | CALIB_CB_NORMALIZE_IMAGE);
 
+// function to get image coordinate of corners
+void get_image_coordinates(vector<Mat> images, vector<vector<Point2f>>& image_points, Size board_size)
+{
+	//cout << "\n" << images.size() << endl;
+	for (int i = 0; i < images.size(); i++)
+	{
+		// vector to store corners
+		vector<Point2f> store_points;
+
+		// Finding corners location on the chessboard and store it in storePoints vector
+		bool found = findChessboardCorners(images.at(i), board_size, store_points, CALIB_CB_ADAPTIVE_THRESH + CALIB_CB_NORMALIZE_IMAGE);
+
+		// getting more accurate pixel location of corners
 		if (found)
 		{
-			allFoundCorners.push_back(pointBuf);
+			// Mat object to store greyscale image of selected frame
+			Mat convert_to_gray;
+
+			// convert selected images to gray scale for input into subpixel corner detection function "cornerSubPix()"
+			cvtColor(images.at(i), convert_to_gray, COLOR_BGR2GRAY);
+
+			// function to get more accurate subpixel location of corners
+			cornerSubPix(convert_to_gray, store_points, Size(11, 11), Size(-1, -1), TermCriteria(TermCriteria::COUNT + TermCriteria::EPS, 30, 0.1));
+
+			image_points.push_back(store_points);
 		}
-		if (showResults)
-		{
-			drawChessboardCorners(*iter, Size(9, 6), pointBuf, found);
-			imshow("Looking for Corners", *iter);
-			waitKey(0);
-		}
+
 	}
-}
-
-//calibrate intrinsic camera
-void camera_calibration(vector<Mat> calibrationImages, Size boardSize, float squareEdgeLength, Mat& cameraMatrix, Mat& distortionCoefficients)
-{
-	vector<vector<Point2f>> checkerboardImageSpacePoints;
-	get_chessboard_corners(calibrationImages, checkerboardImageSpacePoints, false);
-
-	vector<vector<Point3f>> worldSpaceCornerPoints(1);
-
-	create_board_position(boardSize, squareEdgeLength, worldSpaceCornerPoints[0]);
-	worldSpaceCornerPoints.resize(checkerboardImageSpacePoints.size(), worldSpaceCornerPoints[0]);
-
-	vector<Mat> rVectors, tVectors;
-	distortionCoefficients = Mat::zeros(8, 1, CV_64F);
-
-	calibrateCamera(worldSpaceCornerPoints, checkerboardImageSpacePoints, boardSize, cameraMatrix, distortionCoefficients, rVectors, tVectors);
 
 }
 
 
-//save calibration in a text file
-bool save_calibration(string name, Mat cameraMatrix, Mat distanceCoefficients)
+// function to calibrate camera
+void camera_calibration(vector<Mat> images, Size board_size, float chessSqDim)
 {
-	ofstream outStream(name);
-	if (outStream)
+	// Mat object to store intrinsic camera parameters (camera matrix)
+	Mat camera_matrix;
+
+	// vector to store distortion matrix
+	vector<float> dist_coeff_matrix;
+
+	//vector for storing corners coordinates for every frame
+	vector<vector<Point2f>> image_points;
+
+	// obtain image coordinates of corners for every frame
+	get_image_coordinates(images, image_points, board_size);
+
+	vector<vector<Point3f>> world_points(1);
+
+	// obtain world coordinates of chessboard for every frame
+	world_coordinates(board_size, chessSqDim, world_points[0]);
+
+	// making (resizing) the same world points remain for every corresponding Image points 
+	world_points.resize(image_points.size(), world_points[0]);
+
+	//vector for Rotation and Translation (Extrinsic Matrix) in each frame
+	vector<Mat> rvectors, tvectors;
+
+	// function computes camera matrix, extrinsic matrix and mean reprojection error corresponse to a set of images 
+	// method used in this calibration is Zhang's Method 
+	double error = calibrateCamera(world_points, image_points, board_size, camera_matrix, dist_coeff_matrix, rvectors, tvectors);
+
+	// printing out the output
+	cout << "\nIntrinsic camera matrix:  \n\n" << camera_matrix << endl;
+	cout << "\nreprojection error:  \n\n" << error << endl;
+	cout << "\ndistortion coefficients:  \n\n";
+
+	// prints distortion coefficients (k1, k2, p1, p2[, k3[, k4, k5, k6]])
+	for (int i = 0; i < dist_coeff_matrix.size(); i++)
 	{
-		uint16_t rows = cameraMatrix.rows;
-		uint16_t columns = cameraMatrix.cols;
-
-		for (int r = 0; r < rows; r++)
-		{
-			for (int c = 0; c < columns; c++)
-			{
-				double value = cameraMatrix.at<double>(r, c);
-				outStream << value << endl;
-			}
-
-		}
-
-		rows = distanceCoefficients.rows;
-		columns = distanceCoefficients.cols;
-
-		for (int r = 0; r < rows; r++)
-		{
-			for (int c = 0; c < columns; c++)
-			{
-				double value = distanceCoefficients.at<double>(r, c);
-				outStream << value << endl;
-			}
-
-		}
-
-		outStream.close();
-		return true;
+		cout << dist_coeff_matrix.at(i) << "   ";
 	}
 
-	return false;
+	// Mat object to store undistorted image
+	Mat undistorted;
+
+	// upgrade image points to compensate for lens distortion 
+	undistort(images.at(0), undistorted, camera_matrix, dist_coeff_matrix);
+
+	namedWindow("DISTORTED", WINDOW_AUTOSIZE);
+
+	imshow("DISTORTED", images.at(0));
+
+	namedWindow("UNDISTORTED", WINDOW_AUTOSIZE);
+
+	imshow("UNDISTORTED", undistorted);
+
+
+	FileStorage storage("camera_calibration.yml", cv::FileStorage::WRITE);
+
+	storage << "Intrinsic_camera_matrix" << camera_matrix;
+
+	storage << "distortion_coefficients" << dist_coeff_matrix;
+
+	storage << "reprojection_error" << error;
+
+	storage.release();
+
+	waitKey(0);
+
 }
 
 
-int main(int , char** )
+// function to perform real time camera calibration
+int performing_calibration(Size boardSize, float chessSqDim, int frames_number)
 {
-	// create mat object for video frame and drawing corners detection to frame
+	int count = 0;
+
 	Mat frame;
-	Mat drawToFrame;
 
-	// object to store calibration result
-	Mat cameraMatrix = Mat::eye(3, 3, CV_64F);
-	Mat distanceCoefficients;
+	// store frames selected for calibration
+	vector<Mat> selected_image;
 
-	vector<Mat> savedImages;
+	// capturing video with default camera (0)
+	VideoCapture vid(0);
 
-	vector<vector<Point2f>> markerCorners, rejectedCandidates;
+	// disable autofocus in the camera
+	vid.set(CAP_PROP_AUTOFOCUS, 0);
 
-	// capture the video
-	VideoCapture vid;
+	// setting image width resolution in pixels
+	vid.set(CAP_PROP_FRAME_WIDTH, 640);
 
-	int deviceID = 0;             // 0 = open default camera
-	int apiID = cv::CAP_ANY;      // autodetect default API
+	// setting image height resolution in pixels
+	vid.set(CAP_PROP_FRAME_HEIGHT, 480);
 
-	// open selected camera using selected API
-	vid.open(deviceID + apiID);
-
-	//check for opening
 	if (!vid.isOpened())
 	{
-		return -1;
+		return 0;
 	}
 
-	//initialize frame per second
+	// setting frame frequency (frame per second)
 	int fps = 20;
 
-	namedWindow("mounted camera", WINDOW_AUTOSIZE);
+	namedWindow("Webcam", WINDOW_AUTOSIZE);
 
-	//Real time calibration
-	while (vid.read(frame))
+	// keep recording frames until specified "frames_number" detected and selected for calibration are still unfulfilled
+
+	while (count != frames_number)
 	{
-		if (frame.empty()) 
+		// checking the frame reading
+		if (!vid.read(frame))
 		{
-			cerr << "ERROR! blank frame grabbed\n";
 			break;
 		}
 
-		vector<Vec2f> foundPoints;
-		bool found = false;
+		//vector to be filled by the detected corners
+		vector<Point2f> corners;
 
-		found = findChessboardCorners(frame, chessboard_corners, foundPoints, CALIB_CB_ADAPTIVE_THRESH | CALIB_CB_NORMALIZE_IMAGE);
-		
-		frame.copySize(drawToFrame);
+		bool patternfound = findChessboardCorners(frame,
+			boardSize,
+			corners,// finds the location of chessboard corners  and store it in "corners".
+			CALIB_CB_ADAPTIVE_THRESH + CALIB_CB_NORMALIZE_IMAGE
+			+ CALIB_CB_FAST_CHECK);// CALIB_CB_FAST_CHECK is used to simplify the task and saves a lot of time on images have no chessboard corners
 
-		//drawing from corners
-		drawChessboardCorners(drawToFrame, chessboard_corners, foundPoints, found);
+// Mat object to show paterned image
+		Mat pattern_frame;
 
-		if (found)
-			imshow("mounted camera", drawToFrame);
+		// copying frame with patterned corners to pattern_frame Mat object
+		frame.copyTo(pattern_frame);
+
+		// function to draws detected chessboard corners 
+		drawChessboardCorners(pattern_frame, boardSize, Mat(corners), patternfound);
+
+		// checking if chessboard corners pattern is detected 
+		// show patterned image of frame if the pattern is found and show original frame if it is not found
+		if (patternfound)
+		{
+			// shows patterned image
+			imshow("Webcam", pattern_frame);
+
+			// based on choice,if key "ENTER" is pressed, frame will be selected
+			// any other key is taken as rejected!
+			char ch = waitKey(0);
+
+			if (ch == 13)
+			{
+				printf("  %d  ", count + 1);
+
+				// storing frame in selected_image vector
+				selected_image.push_back(frame.clone());
+
+				count++;
+			}
+
+		}
 		else
-			imshow("mounted camera", frame);
-
-		//timing for waitkey
-		char character = waitKey(100000/fps);
-
-
-		switch (character)
 		{
-		case ' ':
-			//saving image
-			if (found)
-			{
-				Mat temp;
-				frame.copyTo(temp);
-				savedImages.push_back(temp);
-
-			}
-			break;
-		case 13:
-			//start calibration
-			if (savedImages.size() > 15)
-			{
-				camera_calibration(savedImages, chessboard_corners, square_dimension, cameraMatrix, distanceCoefficients);
-				save_calibration("intrinsic_calibration.txt", cameraMatrix, distanceCoefficients);
-			}
-			break;
-		case 27:
-			//exit
-			return 0;
-			break;
+			imshow("Webcam", frame);
 		}
 
-		if (waitKey(5) >= 0)
-			break;
-		
+		// wait for specific amount of time before capturing subsequent frames
+		waitKey(1000 / fps);
 	}
+
+	// closing webcam
+	vid.release();
+
+	// exterminate window for webcam
+	destroyWindow("Webcam");
+
+	// function to calibrate camera
+	camera_calibration(selected_image, boardSize, chessSqDim);
+
+	return 0;
+}
+
+
+int main(int argc, char** argv)
+{
+	// chessboard square dimension in meters 
+	float chessSqDim;
+
+	cout << "\nEnter Chessboard squares dimesions in meteres (floating points format): ";
+
+	cin >> chessSqDim;
+
+	cout << endl;
+
+	// width and height from chessboard pattern
+	int width, height;
+
+	cout << "\nEnter number of Chessboard's squares corners on its width: ";
+
+	// from example of chessboard images in calibration_images file , width = 10
+	cin >> width;
+
+	cout << endl;
+
+	cout << "\nEnter number of Chessboard's squares corners on its height: ";
+
+	// from example of chessboard images in calibration_images file , height = 7
+	cin >> height;
+
+	cout << endl;
+
+	int frames_number;
+
+	// it is recomended to take more that 15 images to get more accurate results
+	cout << "\nEnter number of images for computing camera Matrix: ";
+
+	cin >> frames_number;
+
+	cout << "\n(taking large number of images will give better accuracy)";
+
+	cout << "\n" << endl;
+
+	// number of corners
+	Size boardSize(width - 1, height - 1);
+
+	// perform real time calibration
+	performing_calibration(boardSize, chessSqDim, frames_number);
 
 	return 0;
 }
