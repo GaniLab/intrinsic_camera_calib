@@ -14,6 +14,8 @@
 #include <sstream>
 #include <fstream>
 #include <stdio.h>
+#include <iomanip>
+#include <vector>
 
 // OPENCV HEADER NEEDED TO PERFORM REAL TIME CAMERA CALIBRATION
 #include <opencv2/core.hpp>
@@ -31,13 +33,13 @@ using namespace std;
 
 
 // function to creates world cooridnates of chessboard, Z axis is approximated as 0
-void world_coordinates(Size boardSize, float chessSqDim, vector<Point3f>& worldPoints)
+void world_coordinates(Size board_size, float chess_dimension, vector<Point3f>& worldPoints)
 {
-	for (int i = 0; i < boardSize.height; i++)
+	for (int i = 0; i < board_size.height; i++)
 	{
-		for (int j = 0; j < boardSize.width; j++)
+		for (int j = 0; j < board_size.width; j++)
 		{
-			worldPoints.push_back(Point3f(j*chessSqDim, i*chessSqDim, 0.0f));
+			worldPoints.push_back(Point3f(j*chess_dimension, i*chess_dimension, 0.0f));
 		}
 
 	}
@@ -77,7 +79,7 @@ void get_image_coordinates(vector<Mat> images, vector<vector<Point2f>>& image_po
 
 
 // function to calibrate camera
-void camera_calibration(vector<Mat> images, Size board_size, float chessSqDim)
+void camera_calibration(vector<Mat> images, Size board_size, float chess_dimension, ofstream& csvCameraMatrix, ofstream& csvDistCoeffs, ofstream& csvReprojErrors)
 {
 	// Mat object to store intrinsic camera parameters (camera matrix)
 	Mat camera_matrix;
@@ -94,7 +96,7 @@ void camera_calibration(vector<Mat> images, Size board_size, float chessSqDim)
 	vector<vector<Point3f>> world_points(1);
 
 	// obtain world coordinates of chessboard for every frame
-	world_coordinates(board_size, chessSqDim, world_points[0]);
+	world_coordinates(board_size, chess_dimension, world_points[0]);
 
 	// making (resizing) the same world points remain for every corresponding Image points 
 	world_points.resize(image_points.size(), world_points[0]);
@@ -131,8 +133,22 @@ void camera_calibration(vector<Mat> images, Size board_size, float chessSqDim)
 
 	imshow("UNDISTORTED", undistorted);
 
+	// outputing intrinsic camera matrix result into text file (.txt)
+	csvCameraMatrix << setprecision(8) << camera_matrix.at<double>(0, 0) << " " << camera_matrix.at<double>(0, 1) << " " << camera_matrix.at<double>(0, 2) << endl;
+	csvCameraMatrix << setprecision(8) << camera_matrix.at<double>(1, 0) << " " << camera_matrix.at<double>(1, 1) << " " << camera_matrix.at<double>(1, 2) << endl;
+	csvCameraMatrix << setprecision(8) << camera_matrix.at<double>(2, 0) << " " << camera_matrix.at<double>(2, 1) << " " << camera_matrix.at<double>(2, 2) << endl;
 
-	FileStorage storage("camera_calibration.yml", cv::FileStorage::WRITE);
+	// outputing distortion coefficients result into text file (.txt)
+	for (int i = 0; i < dist_coeff_matrix.size(); i++)
+	{
+		csvDistCoeffs << dist_coeff_matrix.at(i) << "   ";
+	}
+
+	// outputing reprojection error result into text file (.txt)
+	csvReprojErrors << error << endl;
+
+	// optionally, we can store the result into yml file in opencv file storage class
+	FileStorage storage("camera_calibration_results.yml", cv::FileStorage::WRITE);
 
 	storage << "Intrinsic_camera_matrix" << camera_matrix;
 
@@ -148,7 +164,7 @@ void camera_calibration(vector<Mat> images, Size board_size, float chessSqDim)
 
 
 // function to perform real time camera calibration
-int performing_calibration(Size boardSize, float chessSqDim, int frames_number)
+int performing_calibration(Size board_size, float chess_dimension, int frames_number, ofstream& csvCameraMatrix, ofstream& csvDistCoeffs, ofstream& csvReprojErrors)
 {
 	int count = 0;
 
@@ -193,7 +209,7 @@ int performing_calibration(Size boardSize, float chessSqDim, int frames_number)
 		vector<Point2f> corners;
 
 		bool patternfound = findChessboardCorners(frame,
-			boardSize,
+			board_size,
 			corners,// finds the location of chessboard corners  and store it in "corners".
 			CALIB_CB_ADAPTIVE_THRESH + CALIB_CB_NORMALIZE_IMAGE
 			+ CALIB_CB_FAST_CHECK);// CALIB_CB_FAST_CHECK is used to simplify the task and saves a lot of time on images have no chessboard corners
@@ -205,7 +221,7 @@ int performing_calibration(Size boardSize, float chessSqDim, int frames_number)
 		frame.copyTo(pattern_frame);
 
 		// function to draws detected chessboard corners 
-		drawChessboardCorners(pattern_frame, boardSize, Mat(corners), patternfound);
+		drawChessboardCorners(pattern_frame, board_size, Mat(corners), patternfound);
 
 		// checking if chessboard corners pattern is detected 
 		// show patterned image of frame if the pattern is found and show original frame if it is not found
@@ -220,7 +236,7 @@ int performing_calibration(Size boardSize, float chessSqDim, int frames_number)
 
 			if (ch == 13)
 			{
-				printf("  %d  ", count + 1);
+				cout << count + 1;
 
 				// storing frame in selected_image vector
 				selected_image.push_back(frame.clone());
@@ -245,7 +261,7 @@ int performing_calibration(Size boardSize, float chessSqDim, int frames_number)
 	destroyWindow("Webcam");
 
 	// function to calibrate camera
-	camera_calibration(selected_image, boardSize, chessSqDim);
+	camera_calibration(selected_image, board_size, chess_dimension, csvCameraMatrix, csvDistCoeffs, csvReprojErrors);
 
 	return 0;
 }
@@ -253,12 +269,12 @@ int performing_calibration(Size boardSize, float chessSqDim, int frames_number)
 
 int main(int argc, char** argv)
 {
-	// chessboard square dimension in meters 
-	float chessSqDim;
+	// chessboard square dimension in meters
+	float chess_dimension;
 
 	cout << "\nEnter Chessboard squares dimesions in meteres (floating points format): ";
 
-	cin >> chessSqDim;
+	cin >> chess_dimension;
 
 	cout << endl;
 
@@ -267,14 +283,14 @@ int main(int argc, char** argv)
 
 	cout << "\nEnter number of Chessboard's squares corners on its width: ";
 
-	// from example of chessboard images in calibration_images file , width = 10
+	// from example of chessboard images in calibration_images file , width = 9
 	cin >> width;
 
 	cout << endl;
 
 	cout << "\nEnter number of Chessboard's squares corners on its height: ";
 
-	// from example of chessboard images in calibration_images file , height = 7
+	// from example of chessboard images in calibration_images file , height = 6
 	cin >> height;
 
 	cout << endl;
@@ -282,19 +298,28 @@ int main(int argc, char** argv)
 	int frames_number;
 
 	// it is recomended to take more that 15 images to get more accurate results
-	cout << "\nEnter number of images for computing camera Matrix: ";
+	cout << "\nnumber of images for calibrating the camera";
+	cout << "\n(taking large number of images will give better accuracy)";
+	cout << "\nEnter number of images: ";
 
 	cin >> frames_number;
-
-	cout << "\n(taking large number of images will give better accuracy)";
 
 	cout << "\n" << endl;
 
 	// number of corners
-	Size boardSize(width - 1, height - 1);
+	Size boardSize(width, height);
 
 	// perform real time calibration
-	performing_calibration(boardSize, chessSqDim, frames_number);
+
+	ofstream csvCameraMatrix("../data/intrinsic_camera_matrix.txt");
+	ofstream csvDistCoeffs("../data/distortion_coefficients");
+	ofstream csvReprojErrors("../data/reprojection_errors");
+
+	performing_calibration(boardSize, chess_dimension, frames_number, csvCameraMatrix, csvDistCoeffs, csvReprojErrors);
+
+	csvCameraMatrix.close();
+	csvDistCoeffs.close();
+	csvReprojErrors.close();
 
 	return 0;
 }
