@@ -220,7 +220,7 @@ void camera_calibration(vector<Mat> images, Size board_size, float chess_dimensi
 	csvReprojErrors << setprecision(8) << error << endl;
 
 	// optionally, we can store the result into yml file in opencv file storage class
-	FileStorage storage("camera_calibration_results.yml", cv::FileStorage::WRITE);
+	FileStorage storage("../output_data/camera_calibration_results.yml", cv::FileStorage::WRITE);
 
 	storage << "Intrinsic_camera_matrix" << camera_matrix;
 
